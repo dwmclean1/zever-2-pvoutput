@@ -10,4 +10,4 @@ Inverter data and any relevant logging info is to the console.
 ### Install dependencies
 `$ pip install -r requirements.txt`
 ### Example usage
-`$ python zever-2-pvoutput.py -ip 192.168.0.1 -interval 1000
+`$ python zever-2-pvoutput.py -ip 192.168.0.1 -interval 1000`
