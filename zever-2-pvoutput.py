@@ -1,5 +1,6 @@
 import sys
 import csv
+import rich
 import time
 import logging
 import datetime
@@ -14,12 +15,11 @@ from astral import LocationInfo
 from rich.logging import RichHandler
 from requests.models import HTTPError
 from astral.geocoder import lookup, database
-from requests.exceptions import Timeout, ConnectionError
+from requests.exceptions import Timeout, ConnectionError, RetryError
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-
-# Check if sun is set
+# Check is sun is set
 def daylight_hours():
     
     s = sun(location.observer, date=datetime.date.today(), tzinfo=location.timezone)
@@ -53,20 +53,21 @@ def parse_inverter_data(data):
 
     formatted_data = {  'date': date,
                         'time': t,
-                        'status': data[7],
+                        'status': data[12],
                         'PAC_W': int(data[10]),
                         'E_TODAY': correct_E_Today(data[11])[0]}
 
     return formatted_data
 
 
-# Database logging
 def log_inverter_data(data):
 
     fieldnames = ['date', 'time', 'status', 'PAC_W', 'E_TODAY']
 
     for key, value in data.items():
             console.print(f'[bold]{key} : [blue]{value}[/]')
+            if key == 'status' and value == 'Error':
+                logging.warning('Status Error')
 
     try:
         with open('database.csv', 'x') as db:
@@ -84,7 +85,8 @@ def log_inverter_data(data):
         logging.info('Data logged to local database')
 
 
-# Initalise requests session
+
+# Init requests session
 def requests_retry_session(
     retries=3,
     backoff_factor=0.3,
@@ -105,7 +107,7 @@ def requests_retry_session(
 
 if __name__ == "__main__":
 
-    # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Parse commandline arguments ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    # Parse commandline args
     parser = argparse.ArgumentParser(description='Retreive inverter data and store in CSV file.')
     parser.add_argument('-ip', type=str, help='IP address of inverter')
     parser.add_argument('-interval', type=int, help='Data request interval in seconds')
@@ -114,9 +116,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[RichHandler()])
     console = Console()
 
-    # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Load settings in config.py ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-
-    # Location
+    # Initialise location info
     try: 
         geo_info = lookup(CITY, database())
     except Exception as e:
@@ -131,12 +131,12 @@ if __name__ == "__main__":
     location.longitude = geo_info.longitude
     loc_tz = timezone(location.timezone)
 
-    # API credentials
+    # # Check for API info
     # if 'API_KEY' or 'SYSTEM_ID' not in globals():
     #     logging.critical('PVOutput API credentials not found')
     #     sys.exit(1)
 
-    # Inverter IP
+    # Set inverter IP
     if arg.ip:
         ip = arg.ip
     elif 'INVERTER_IP' in globals():
@@ -148,14 +148,14 @@ if __name__ == "__main__":
     inverter_url = f'http://{ip}/home.cgi'
 
 
-    # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Initalise PVOutput requests session ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+     # Init PVOutput requests session
     pvoutput_session = requests_retry_session()
     pvoutput_session.headers.update({ 
         'X-Pvoutput-Apikey': API_KEY,
         'X-Pvoutput-SystemId': SYSTEM_ID})
 
 
-    # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Set data request interval, system name ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+    # Set data request interval, system name
     if arg.interval:
         request_interval = arg.interval
     else:
@@ -174,46 +174,50 @@ if __name__ == "__main__":
     print(f'Collecting data for {system_name}')
     print(f'-----------------------------------------')
 
-    # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Main loop ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-    while daylight_hours():
+    # Main loop
+    while True:
+        while daylight_hours():
 
-        # Grab data from inverter
-        inverter_session = requests_retry_session()
-        try:
-            logging.info('Grabbing data from inverter')
-            response = inverter_session.get(inverter_url, timeout=5)
-            response.raise_for_status()
-        except HTTPError as e:
-            logging.warning('HTTP error')
-            logging.warning(e)
-        except ConnectionError as e:
-            logging.warning('Connection Error')
-        except Timeout as e:
-            logging.warningl('Connection timed out')
-        else:
-            inverter_data = parse_inverter_data(response.text)
-            log_inverter_data(inverter_data)
-
-            # ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ Upload data to PVOutput ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-            payload = {    
-                'c1': 2,                               # Cumulative Flag
-                'd': inverter_data['date'],            # Date
-                't': inverter_data['time'],            # Time
-                'v1': inverter_data['E_TODAY'],        # Energy Generation
-                'v2': inverter_data['PAC_W']           # Power Generation
-                }
-
+            # Grab data from inverter
+            inverter_session = requests_retry_session()
             try:
-                response = pvoutput_session.post('https://pvoutput.org/service/r2/addstatus.jsp', data=payload)
+                logging.info('Grabbing data from inverter')
+                response = inverter_session.get(inverter_url, timeout=5)
                 response.raise_for_status()
-            except Exception as e:
+            except HTTPError as e:
+                logging.warning('HTTP error')
                 logging.warning(e)
+            except ConnectionError as e:
+                logging.warning('Connection Error')
+            except (RetryError, Timeout) as e:
+                logging.warning('Connection timed out')
+            except Exception as e:
+                print('Some other error')
+                print(e)
             else:
-                logging.info('Data uploaded to PVoutput')
-                
-        with console.status(f'Retrying in {int(request_interval / 60)} minutes', spinner='dots12'):
-            time.sleep(request_interval)
+                inverter_data = parse_inverter_data(response.text)
+                log_inverter_data(inverter_data)
 
-    else:
-        logging.info('Sun has set - Resumimg at sunrise', end='\r')
-        time.sleep(request_interval)
+                # Upload data to PVOutput
+                payload = {    
+                    'd': inverter_data['date'],            # Date
+                    't': inverter_data['time'],            # Time
+                    'v1': inverter_data['E_TODAY'],        # Energy Generation
+                    'v2': inverter_data['PAC_W']           # Power Generation
+                    }
+
+                try:
+                    response = pvoutput_session.post('https://pvoutput.org/service/r2/addstatus.jsp', data=payload)
+                    response.raise_for_status()
+                except Exception as e:
+                    logging.warning(e)
+                else:
+                    logging.info('Data uploaded to PVoutput')
+                    
+            with console.status(f'Retrying in {int(request_interval / 60)} minutes', spinner='dots12'):
+                time.sleep(request_interval)
+
+        else:
+            with console.status('Sun has set - Resumimg at sunrise'):
+                while daylight_hours() == False:
+                    time.sleep(request_interval)
