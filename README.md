@@ -4,7 +4,7 @@ Collects data from Zever brand solar inverters and uploads the data to PVOutput.
 ## Overview
 Config.py holds all the neccessary info for collecting and uploading your solar data. Inverter IP address and request interval time in seconds can be passed in as arguments when the program is run, these will override what is in config.py.
 All data is logged to 'database.csv' in the main directory. If the database does not exist it will be created when the program is run.
-Inverter data and any relevant logging info is to the console.
+Inverter data and any relevant logging info is printed to the console.
 
 ## HOWTO
 ### Install dependencies
