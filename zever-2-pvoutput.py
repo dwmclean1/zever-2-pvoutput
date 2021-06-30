@@ -9,6 +9,7 @@ import argparse
 
 from config import *
 from pytz import timezone
+from pathlib import Path
 from rich.console import Console
 from astral.sun import sun
 from astral import LocationInfo
@@ -61,21 +62,15 @@ def parse_inverter_data(data):
 
 
 def log_inverter_data(data):
-
-    fieldnames = ['date', 'time', 'status', 'PAC_W', 'E_TODAY']
-
+    
+    # Print data to console
     for key, value in data.items():
             console.print(f'[bold]{key} : [blue]{value}[/]')
             if key == 'status' and value == 'Error':
                 logging.warning('Status Error')
-
+    
     try:
-        with open('database.csv', 'x') as db:
-            writer = csv.DictWriter(db, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerow(data)
-    except FileExistsError:
-        with open('database.csv', 'a') as db:
+        with open(db_path, 'a') as db:
             writer = csv.DictWriter(db, fieldnames=fieldnames)
             writer.writerow(data)
     except Exception as e:
@@ -163,6 +158,11 @@ if __name__ == "__main__":
     else:
         try:
             response = pvoutput_session.get('https://pvoutput.org/service/r2/getsystem.jsp', timeout=5)
+            response.raise_for_status()
+        except HTTPError as e:
+            if response.reason == 'Unauthorized':
+                logging.warning('Could not authenticate with PVOutput API - Check API settings')
+                sys.exit(1)
         except Exception as e:
             logging.warning(e)
             logging.warning(f'Error retrieving data interval from PVOutput - Default of {DEFAULT_REQ_INTERVAL} second(s) will be used')
@@ -172,12 +172,31 @@ if __name__ == "__main__":
             request_interval = int(data[15][:-3]) * 60
             system_name = data[0]
     
-    print(f'-----------------------------------------')
-    print(f'Collecting data for {system_name}')
-    print(f'-----------------------------------------')
-
+    
+    # Create database at DB_DIR if one does not exist
+    fieldnames = ['date', 'time', 'status', 'PAC_W', 'E_TODAY']
+    db_name = f'{system_name} database.csv'
+    db_path = Path(DB_DIR) / db_name
+    if db_path.exists() == False:
+        try:
+            with open(db_path, 'x') as db:
+                writer = csv.DictWriter(db, fieldnames=fieldnames)
+                writer.writeheader()
+        except Exception as e:
+            logging.info(e)
+        else:
+            logging.info(f'New database created at {db_path}')
+    else:
+        logging.info(f'Logging to existing database at {db_path}')
+        
+        
     # Main loop
     while True:
+        
+        print(f'-----------------------------------------')
+        print(f'Collecting data for {system_name}')
+        print(f'-----------------------------------------')
+        
         while daylight_hours():
             # Grab data from inverter
             try:
