@@ -81,7 +81,7 @@ def log_inverter_data(data):
     except Exception as e:
         logging.warning(e)
         logging.warning('Error logging to local database')
-    finally:
+    else:
         logging.info('Data logged to local database')
 
 
@@ -148,11 +148,13 @@ if __name__ == "__main__":
     inverter_url = f'http://{ip}/home.cgi'
 
 
-     # Init PVOutput requests session
+     # Init PVOutput, inverter requests sessions
     pvoutput_session = requests_retry_session()
     pvoutput_session.headers.update({ 
         'X-Pvoutput-Apikey': API_KEY,
         'X-Pvoutput-SystemId': SYSTEM_ID})
+    
+    inverter_session = requests_retry_session()
 
 
     # Set data request interval, system name
@@ -163,7 +165,7 @@ if __name__ == "__main__":
             response = pvoutput_session.get('https://pvoutput.org/service/r2/getsystem.jsp', timeout=5)
         except Exception as e:
             logging.warning(e)
-            logging.warning(f'Error retreiving data interval from PVOutput - Default of {DEFAULT_REQ_INTERVAL} second(s) will be used')
+            logging.warning(f'Error retrieving data interval from PVOutput - Default of {DEFAULT_REQ_INTERVAL} second(s) will be used')
             request_interval = DEFAULT_REQ_INTERVAL
         else:
             data = response.text.split(',')
@@ -177,9 +179,7 @@ if __name__ == "__main__":
     # Main loop
     while True:
         while daylight_hours():
-
             # Grab data from inverter
-            inverter_session = requests_retry_session()
             try:
                 logging.info('Grabbing data from inverter')
                 response = inverter_session.get(inverter_url, timeout=5)
