@@ -153,24 +153,26 @@ if __name__ == "__main__":
 
 
     # Set data request interval, system name
-    if arg.interval:
-        request_interval = arg.interval
+    try:
+        response = pvoutput_session.get('https://pvoutput.org/service/r2/getsystem.jsp', timeout=5)
+        response.raise_for_status()
+    except HTTPError as e:
+        if response.reason == 'Unauthorized':
+            logging.warning('Could not authenticate with PVOutput API - Check API settings')
+            sys.exit(1)
+    except Exception as e:
+        logging.warning(e)
+        logging.warning(f'Error retrieving data interval from PVOutput - Default of {DEFAULT_REQ_INTERVAL} second(s) will be used')
+        request_interval = DEFAULT_REQ_INTERVAL
     else:
-        try:
-            response = pvoutput_session.get('https://pvoutput.org/service/r2/getsystem.jsp', timeout=5)
-            response.raise_for_status()
-        except HTTPError as e:
-            if response.reason == 'Unauthorized':
-                logging.warning('Could not authenticate with PVOutput API - Check API settings')
-                sys.exit(1)
-        except Exception as e:
-            logging.warning(e)
-            logging.warning(f'Error retrieving data interval from PVOutput - Default of {DEFAULT_REQ_INTERVAL} second(s) will be used')
-            request_interval = DEFAULT_REQ_INTERVAL
+        data = response.text.split(',')
+        if arg.interval:
+            request_interval = arg.interval
         else:
-            data = response.text.split(',')
             request_interval = int(data[15][:-3]) * 60
-            system_name = data[0]
+        system_name = data[0]
+    
+    
     
     
     # Create database at DB_DIR if one does not exist
